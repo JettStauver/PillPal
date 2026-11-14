@@ -44,6 +44,13 @@ app.js (coordinator)
 4. Import the function in modules that depend on it
 5. For state changes: always call `saveState()` at the end (this triggers localStorage + updateUI)
 
+### Releasing / Deploying
+
+1. Bump `CACHE` in `public/sw.js` (e.g. `'pillpal-v26.1'`). **Required** — without it, installed/offline users keep the old cached version.
+2. If you added a new file under `public/`, add it to `SHELL` in `public/sw.js` so it works offline.
+3. Bump the version in `public/index.html` (settings panel) and `package.json`.
+4. `npm run deploy` -> pillpal.jettstauver.com, then commit + push.
+
 ### Debugging State
 
 ```javascript
