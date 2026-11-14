@@ -32,6 +32,47 @@ export function takePill() {
     saveState();
 }
 
+/**
+ * Record a dose that was actually taken at an earlier time.
+ * Lets a caregiver log a forgotten pill so the schedule behaves as if
+ * it had been taken then (e.g. woke at 9am, logs it at 11am -> counts as 9am).
+ *
+ * @param {number} timestamp - epoch ms the dose was really taken
+ * @returns {boolean} true if a dose was recorded
+ */
+export function takePillAt(timestamp) {
+    const now = getNow().getTime();
+    const state = getState();
+    const d = state.data;
+
+    // Don't exceed the day's dose limit
+    const cap = d.effectiveTotalDoses || state.settings.totalDoses;
+    if (d.dosesTaken >= cap) return false;
+
+    let ts = timestamp;
+
+    // Never in the future
+    if (ts > now) ts = now;
+
+    // Never before the previous dose (avoids a negative interval)
+    if (d.dosesTaken > 0 && d.lastDoseTime && ts < d.lastDoseTime) {
+        ts = d.lastDoseTime;
+    }
+
+    pushHistory();
+
+    d.lastDoseTime = ts;
+    if (d.dosesTaken === 0) {
+        d.firstDoseTime = ts;
+    }
+    d.dosesTaken++;
+    d.snoozesUsedForCurrent = 0;
+
+    calculateSchedule();
+    saveState();
+    return true;
+}
+
 let snoozeDebounce = false;
 export function snooze() {
     if (snoozeDebounce) return;

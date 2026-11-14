@@ -4,6 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PillPal</title>
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#1e293b">
+    <link rel="apple-touch-icon" href="icons/icon-192.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
     <!-- Styles: Tailwind CDN + FontAwesome CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6/css/all.min.css">
@@ -104,6 +109,11 @@
                     <span class="text-slate-400 text-sm block">Target End Time</span>
                     <span id="target-end-display" class="font-mono text-xl">22:00</span>
                 </div>
+                <button onclick="toggleBackdate()" class="col-span-2 bg-slate-700 p-3 rounded-lg hover:bg-slate-600 transition-colors text-left">
+                    <span class="text-slate-400 text-sm block"><i class="fa-solid fa-clock-rotate-left mr-2"></i>Log Earlier Dose</span>
+                    <span class="text-slate-300 text-sm">Record a pill taken in the past</span>
+                </button>
+
                 <button onclick="toggleSettings()" class="col-span-2 bg-slate-700 p-3 rounded-lg hover:bg-slate-600 transition-colors text-left">
                     <span class="text-slate-400 text-sm block"><i class="fa-solid fa-gear mr-2"></i>Settings</span>
                     <span class="text-slate-300 text-sm">Caregiver Options</span>
@@ -249,8 +259,22 @@
                 <div class="pt-6 text-center">
                     <button onclick="hardReset()" class="text-red-500 underline">Hard Reset (Wipe All Data)</button>
                 </div>
-                <div class="pt-4 text-center text-slate-500 text-sm">v1.6.4</div>
+                <div class="pt-4 text-center text-slate-500 text-sm">v26.0</div>
             </div>
+        </div>
+    </div>
+
+    <!-- BACKDATE DOSE OVERLAY -->
+    <div id="backdate-overlay" class="hidden fixed inset-0 bg-slate-800 z-50 overflow-y-auto p-8">
+        <div class="max-w-xl mx-auto bg-slate-700 p-8 rounded-xl shadow-2xl">
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="text-3xl font-bold">Log Dose At Earlier Time</h2>
+                <button onclick="toggleBackdate()" class="text-red-400 text-xl font-bold">Close X</button>
+            </div>
+            <p class="text-slate-400 mb-4">Forgot to log a dose? Enter the time it was actually taken. The schedule will adjust as if the pill was taken then.</p>
+            <label class="block text-slate-400 mb-2">Time Taken (24h Format)</label>
+            <input type="time" id="backdate-input" class="bg-slate-900 p-4 rounded text-2xl text-white w-full border border-slate-600 mb-6">
+            <button onclick="logPillEarlier()" class="w-full bg-emerald-600 p-4 rounded-xl text-xl font-bold">Confirm Dose</button>
         </div>
     </div>
 </body>

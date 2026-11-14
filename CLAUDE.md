@@ -10,7 +10,10 @@ PillPal is a single-page vanilla JavaScript web app for medication tracking. It 
 
 ## Architecture Summary
 
-- **Module system**: ES6 modules in `js_modules/` folder
+- **Layout**: everything served lives in `public/` (index.html, `js_modules/`, `sw.js`, `manifest.json`, `icons/`)
+- **Module system**: ES6 modules in `public/js_modules/` folder
+- **Deploy**: `npm run deploy` (cf CLI, `cloudflare.config.ts`) -> pillpal.jettstauver.com
+- **Offline/PWA**: `public/sw.js` precaches the shell; add new files to its `SHELL` list and bump `CACHE` on release
 - **Core module**: `state.js` manages all application state and localStorage persistence
 - **Entry point**: `app.js` imports all modules, exposes functions on `window` object for HTML onclick handlers
 - **Storage**: localStorage key is `'pillTrackerState'` (JSON object)
@@ -80,7 +83,7 @@ The `applyTimeOffset()` function in settings.js allows simulating time changes f
 
 ## Important Implementation Details
 
-- **No build system**: All JS is vanilla. Uses Tailwind CSS (minified version).
+- **No build system**: All JS is vanilla. Uses Tailwind CSS + FontAwesome from CDN (cached by the service worker).
 - **HTML onclick handlers**: Functions must be on `window` object. See how actions are exposed in app.js. Exception: the main `#btn-take` button uses a click listener in initializeApp() and switches behavior via `data-action` attribute (`"pill"` vs `"reset"`).
 - **History/Undo**: pushHistory() saves state snapshots. undoLastAction() restores. Limited to 5 snapshots (older entries are dropped).
 - **Day reset logic**: checkReset() runs every 500ms and handles daily reset at midnight (respects time offset).

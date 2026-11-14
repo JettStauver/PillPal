@@ -3,10 +3,10 @@
  * Initializes and coordinates all modules
  */
 
-import { getState, saveState, undoLastAction } from './state.js';
+import { getState, getNow, saveState, undoLastAction } from './state.js';
 import { handleBeeping } from './audio.js';
 import { runWatchdog } from './watchdog.js';
-import { takePill, snooze, checkReset, manualResetDay, confirmResetDay, resetDayFromButton } from './actions.js';
+import { takePill, takePillAt, snooze, checkReset, manualResetDay, confirmResetDay, resetDayFromButton } from './actions.js';
 import { toggleSettings, saveSettings, applyTimeOffset, clearTimeOffset, hardReset, updateSettingsVisibility } from './settings.js';
 import { updateUI, updateLoadingText } from './ui.js';
 
@@ -43,6 +43,34 @@ window.clearTimeOffset = () => {
 window.hardReset = hardReset;
 window.updateLoadingText = updateLoadingText;
 window.updateSettingsVisibility = updateSettingsVisibility;
+
+// Backdate-dose overlay: log a pill that was actually taken earlier
+window.toggleBackdate = () => {
+    const overlay = document.getElementById('backdate-overlay');
+    if (!overlay) return;
+    overlay.classList.toggle('hidden');
+    if (!overlay.classList.contains('hidden')) {
+        // Prefill with the current (effective) time for the caregiver to dial back
+        const now = getNow();
+        const input = document.getElementById('backdate-input');
+        if (input) {
+            input.value = String(now.getHours()).padStart(2, '0') + ':' +
+                          String(now.getMinutes()).padStart(2, '0');
+        }
+    }
+};
+window.logPillEarlier = () => {
+    const input = document.getElementById('backdate-input');
+    if (!input || !input.value) return;
+    const [h, m] = input.value.split(':');
+    // Build the timestamp on today's (effective) date
+    const doseTime = new Date(getNow());
+    doseTime.setHours(parseInt(h), parseInt(m), 0, 0);
+    takePillAt(doseTime.getTime());
+    const overlay = document.getElementById('backdate-overlay');
+    if (overlay) overlay.classList.add('hidden');
+    updateUI();
+};
 
 // Initialize application
 export function initializeApp() {
@@ -90,4 +118,9 @@ if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initializeApp);
 } else {
     initializeApp();
+}
+
+// Offline / installable PWA
+if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').catch(err => console.warn('SW registration failed', err));
 }

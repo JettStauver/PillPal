@@ -35,14 +35,15 @@ npm install
 npm run dev
 ```
 
-Then open the URL Vite gives you (usually `http://localhost:5173`).
+Then open the local URL it prints.
 
-### Build for Production
+### Deploy
 
 ```bash
-npm run build
-npm run preview
+npm run deploy
 ```
+
+Live at https://pillpal.jettstauver.com. Installable as a PWA and works offline after the first visit.
 
 ---
 
@@ -51,10 +52,11 @@ npm run preview
 | Thing | What |
 |---|---|
 | JavaScript | Vanilla ES6 modules, no framework |
-| CSS | Tailwind CSS v4 |
+| CSS | Tailwind CSS (CDN) |
 | Icons | Font Awesome 6 |
 | Audio | Web Audio API |
-| Build | Vite 6 |
+| Hosting | Cloudflare Workers static assets (no build step) |
+| Offline | Service worker + web app manifest |
 | Storage | localStorage (no backend) |
 
 ---
