@@ -3,10 +3,11 @@
  * Handles dose scheduling and interval calculations
  */
 
-import { getState, getNow } from './state.js';
+import { getState, getCap } from './state.js';
+
+const HOUR = 60 * 60 * 1000;
 
 export function calculateSchedule() {
-    const now = getNow();
     const state = getState();
     const s = state.settings;
     const d = state.data;
@@ -14,78 +15,51 @@ export function calculateSchedule() {
     // If we haven't started yet, interval is standard
     if (d.dosesTaken === 0) {
         d.currentInterval = s.standardInterval;
-        d.nextDoseScheduled = null; // Next dose is NOW (whenever he clicks)
-        d.effectiveTotalDoses = s.totalDoses; // Reset to default
+        d.nextDoseScheduled = null; // Next dose is whenever they click
+        d.effectiveTotalDoses = s.totalDoses;
+        d.dayCompleted = false;
         return;
     }
 
-    // Logic: We have taken at least 1 pill.
-    // Remaining doses needed
-    let dosesRemaining = s.totalDoses - d.dosesTaken;
-    
-    if (dosesRemaining <= 0) {
-        d.dayCompleted = true;
-        return;
-    }
-
-    // FIXED INTERVAL MODE: Just use the standard interval always
     if (s.intervalMode === 'fixed' || !s.useEndTime) {
+        // FIXED INTERVAL MODE: Just use the standard interval always
         d.currentInterval = s.standardInterval;
         d.effectiveTotalDoses = s.totalDoses;
-        
-        // Set next dose time based on last dose + interval
-        d.nextDoseScheduled = d.lastDoseTime + (d.currentInterval * 60 * 60 * 1000);
-        return;
-    }
-
-    // ADAPTIVE INTERVAL MODE: Original logic
-    // Create a date object for the Target End Time (Today at Hour N)
-    let endTimeDate = new Date(d.firstDoseTime); 
-    endTimeDate.setHours(s.endHour, 0, 0, 0);
-
-    // Time remaining until the hard stop
-    // NOTE: We calculate from LAST DOSE TIME. 
-    let timeRemainingMs = endTimeDate.getTime() - d.lastDoseTime;
-    let timeRemainingHours = timeRemainingMs / (1000 * 60 * 60);
-
-    // Try to fit remaining doses
-    let proposedInterval = s.standardInterval;
-    
-    let fits = false;
-    while(proposedInterval >= s.minInterval) {
-        if (proposedInterval * dosesRemaining <= timeRemainingHours) {
-            fits = true;
-            break;
-        }
-        proposedInterval -= s.step;
-    }
-
-    if (fits) {
-        d.currentInterval = proposedInterval;
-        d.effectiveTotalDoses = s.totalDoses;
     } else {
-        // If it doesn't fit even at min interval, we must drop a dose
-        d.currentInterval = s.minInterval;
-        
-        if (s.allowDoseReduction) {
-            // Calculate capacity: how many intervals of 'minInterval' fit in 'timeRemaining'?
-            let maxFutureDoses = Math.floor(timeRemainingHours / s.minInterval);
-            
-            // Effective total is what we have taken + what we CAN take
-            let newTotal = d.dosesTaken + maxFutureDoses;
-            
-            // Respect minimum doses setting
-            newTotal = Math.max(newTotal, s.minDoses || 0);
-            
-            // Clamp it so it doesn't exceed original total
-            d.effectiveTotalDoses = Math.min(newTotal, s.totalDoses);
-        } else {
-            // Don't allow dose reduction - keep trying at min interval
+        // ADAPTIVE INTERVAL MODE: shrink the interval to fit remaining doses before the end time
+        const endTimeDate = new Date(d.firstDoseTime);
+        endTimeDate.setHours(s.endHour, s.endMinute || 0, 0, 0);
+
+        const dosesRemaining = s.totalDoses - d.dosesTaken;
+        const timeRemainingHours = Math.max(0, (endTimeDate.getTime() - d.lastDoseTime) / HOUR);
+        const step = s.step > 0 ? s.step : 0.5; // step <= 0 would loop forever
+
+        let fits = dosesRemaining <= 0;
+        let proposedInterval = s.standardInterval;
+        while (!fits && proposedInterval >= s.minInterval) {
+            if (proposedInterval * dosesRemaining <= timeRemainingHours) fits = true;
+            else proposedInterval = Math.round((proposedInterval - step) * 1000) / 1000;
+        }
+
+        if (fits) {
+            d.currentInterval = proposedInterval;
             d.effectiveTotalDoses = s.totalDoses;
+        } else {
+            // Doesn't fit even at min interval
+            d.currentInterval = Math.min(s.minInterval, s.standardInterval);
+            if (s.allowDoseReduction) {
+                const maxFutureDoses = Math.floor(timeRemainingHours / d.currentInterval);
+                const newTotal = Math.max(d.dosesTaken + maxFutureDoses, s.minDoses || 0, d.dosesTaken);
+                d.effectiveTotalDoses = Math.min(newTotal, s.totalDoses);
+            } else {
+                d.effectiveTotalDoses = s.totalDoses;
+            }
         }
     }
 
-    // Set next dose time based on last dose + interval
-    // Always recalculate to handle manual time changes
-    d.nextDoseScheduled = d.lastDoseTime + (d.currentInterval * 60 * 60 * 1000);
+    d.dayCompleted = d.dosesTaken >= getCap();
+
+    // Next dose = last dose + interval, plus any snoozes already used for it
+    // (so reloads / settings saves don't silently drop snoozes)
+    d.nextDoseScheduled = d.lastDoseTime + d.currentInterval * HOUR + (d.snoozeAddedMs || 0);
 }

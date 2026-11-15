@@ -3,28 +3,31 @@
  * Handles beeping and audio notifications
  */
 
-import { getState, getNow } from './state.js';
+import { getState, getNow, getCap } from './state.js';
 
-let beepStartTime = null; // When beeping should start (when pill is due)
-let lastBeepCount = 0; // Track how many beeps in current sequence
+let beepStartTime = null; // When beeping started (when pill became due)
+let lastBeepCount = 0;    // How many beeps in current sequence
+let pending = [];         // queued follow-up beeps, cancelled when pill no longer due
 
-// Reuse a single AudioContext to avoid creating many contexts
+// Reuse a single AudioContext. Browsers create it 'suspended' until a user
+// gesture, so every call tries to resume and app.js calls unlockAudio() on taps.
 let _audioCtx = null;
-
 function getAudioContext() {
-    if (!_audioCtx) {
-        _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    }
+    if (!_audioCtx) _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (_audioCtx.state !== 'running') _audioCtx.resume().catch(() => {});
     return _audioCtx;
 }
+export const unlockAudio = () => { getAudioContext(); };
 
-// Play a longer, alarm-like beep. durationMs defaults to ~1.2s.
 export function playBeep(durationMs = 220) {
     const audioContext = getAudioContext();
+    // Suspended context would queue beeps and blast them all later
+    if (audioContext.state !== 'running') return;
+    const vol = Math.min(1, Math.max(0, getState().settings.beepVolume ?? 0.25));
+    if (vol === 0) return;
     const now = audioContext.currentTime;
-    const duration = Math.max(50, durationMs) / 1000; // seconds
+    const duration = Math.max(50, durationMs) / 1000;
 
-    // Gentle timbre: sine + triangle, lower volume
     const osc1 = audioContext.createOscillator();
     const osc2 = audioContext.createOscillator();
     const gain = audioContext.createGain();
@@ -32,9 +35,6 @@ export function playBeep(durationMs = 220) {
 
     osc1.type = 'sine';
     osc2.type = 'triangle';
-    osc1.frequency.value = 440; // A4, pleasant
-    osc2.frequency.value = 660; // minor harmonic
-
     filter.type = 'lowpass';
     filter.frequency.value = 3500;
 
@@ -43,14 +43,13 @@ export function playBeep(durationMs = 220) {
     filter.connect(gain);
     gain.connect(audioContext.destination);
 
-    // Gentle envelope: very quick attack, short sustain, short release
     const attack = 0.005;
     const release = Math.min(0.06, duration * 0.3);
     const sustainEnd = now + duration - release;
 
     gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.linearRampToValueAtTime(0.25, now + attack);
-    gain.gain.setValueAtTime(0.25, sustainEnd);
+    gain.gain.linearRampToValueAtTime(vol, now + attack);
+    gain.gain.setValueAtTime(vol, sustainEnd);
     gain.gain.exponentialRampToValueAtTime(0.0001, sustainEnd + release);
 
     // Small frequency wobble for a softer, natural sound
@@ -65,56 +64,47 @@ export function playBeep(durationMs = 220) {
     osc2.stop(sustainEnd + release + 0.02);
 }
 
+function stopBeeping() {
+    beepStartTime = null;
+    lastBeepCount = 0;
+    pending.forEach(clearTimeout);
+    pending = [];
+}
+
 export function handleBeeping() {
     const now = getNow();
     const state = getState();
-    
-    // Check if a pill is currently due
     const d = state.data;
-    if (d.dosesTaken === 0 || d.dosesTaken >= (d.effectiveTotalDoses || state.settings.totalDoses)) {
-        beepStartTime = null;
-        lastBeepCount = 0;
-        return; // Not in active dosing period
-    }
-    
-    // Check if due
-    if (d.nextDoseScheduled && now >= new Date(d.nextDoseScheduled)) {
-        if (!beepStartTime) {
-            beepStartTime = now.getTime();
-            lastBeepCount = 0;
-        }
-        
-        const elapsedMs = now.getTime() - beepStartTime;
-        const elapsedSecs = elapsedMs / 1000;
-        const interval1 = state.settings.beepInterval1 || 2; // First minute interval
-        const interval2 = state.settings.beepInterval2 || 30; // After first minute interval
-        
-        // First minute: beep at interval1 seconds
-        if (elapsedSecs < 60) {
-            const beepsExpected = Math.floor(elapsedSecs / interval1) + 1;
-            if (beepsExpected > lastBeepCount) {
-                // Longer single alarm-like beep during first minute
-                playBeep(1000);
-                lastBeepCount = beepsExpected;
-            }
-        } else {
-            // After first minute: play a short sequence of longer alarm beeps
-            const beepsInFirstMin = Math.floor(60 / interval1);
-            const timeAfterMin = elapsedSecs - 60;
-            const sequencesAfterMin = Math.floor(timeAfterMin / interval2) + 1;
-            const totalBeepsExpected = beepsInFirstMin + (sequencesAfterMin * 3);
 
-            if (totalBeepsExpected > lastBeepCount) {
-                // Play 3 alarm-style beeps in sequence (non-overlapping)
-                playBeep(1200);
-                setTimeout(() => playBeep(1200), 600);
-                setTimeout(() => playBeep(1200), 1300);
-                lastBeepCount = totalBeepsExpected;
-            }
+    const due = d.dosesTaken > 0 && d.dosesTaken < getCap() &&
+                d.nextDoseScheduled && now.getTime() >= d.nextDoseScheduled;
+    if (!due) return stopBeeping();
+
+    if (!beepStartTime) {
+        beepStartTime = now.getTime();
+        lastBeepCount = 0;
+    }
+
+    const elapsedSecs = (now.getTime() - beepStartTime) / 1000;
+    const interval1 = Math.max(1, state.settings.beepInterval1 || 1);
+    const interval2 = Math.max(1, state.settings.beepInterval2 || 30);
+
+    if (elapsedSecs < 60) {
+        // First minute: one long beep every interval1 seconds
+        const beepsExpected = Math.floor(elapsedSecs / interval1) + 1;
+        if (beepsExpected > lastBeepCount) {
+            playBeep(1000);
+            lastBeepCount = beepsExpected;
         }
     } else {
-        // Not due anymore
-        beepStartTime = null;
-        lastBeepCount = 0;
+        // After first minute: a 3-beep burst every interval2 seconds
+        const beepsInFirstMin = Math.floor(60 / interval1);
+        const sequencesAfterMin = Math.floor((elapsedSecs - 60) / interval2) + 1;
+        const totalBeepsExpected = beepsInFirstMin + sequencesAfterMin * 3;
+        if (totalBeepsExpected > lastBeepCount) {
+            playBeep(600);
+            pending = [800, 1600].map(t => setTimeout(() => playBeep(600), t));
+            lastBeepCount = totalBeepsExpected;
+        }
     }
 }

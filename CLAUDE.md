@@ -10,7 +10,7 @@ PillPal is a single-page vanilla JavaScript web app for medication tracking. It 
 
 ## Architecture Summary
 
-- **Layout**: everything served lives in `public/` (index.html, `js_modules/`, `sw.js`, `manifest.json`, `icons/`)
+- **Layout**: everything served lives in `public/` (index.html, `styles.css`, `js_modules/`, `sw.js`, `manifest.json`, `icons/`)
 - **Module system**: ES6 modules in `public/js_modules/` folder
 - **Deploy**: `npm run deploy` (cf CLI, `cloudflare.config.ts`) -> pillpal.jettstauver.com
 - **Offline/PWA**: `public/sw.js` precaches the shell; add new files to its `SHELL` list and bump `CACHE` on release
@@ -18,18 +18,19 @@ PillPal is a single-page vanilla JavaScript web app for medication tracking. It 
 - **Entry point**: `app.js` imports all modules, exposes functions on `window` object for HTML onclick handlers
 - **Storage**: localStorage key is `'pillTrackerState'` (JSON object)
 - **UI cycle**: updateUI() runs every 500ms via setInterval
+- **Tests**: `npm test` runs `test/logic.test.mjs` (node, no deps) covering scheduler/actions/watchdog/state
 
 ### Critical Module Dependencies
 
 ```
 app.js (coordinator)
 ├── state.js (core state + localStorage)
-├── ui.js (depends on state.js)
+├── ui.js (depends on state.js, actions.js)
 ├── actions.js (depends on state.js, scheduler.js)
 ├── scheduler.js (depends on state.js)
 ├── audio.js (depends on state.js)
 ├── watchdog.js (depends on state.js, scheduler.js, actions.js)
-└── settings.js (depends on state.js, scheduler.js)
+└── settings.js (depends on state.js, scheduler.js, ui.js, audio.js)
 ```
 
 **Critical rule**: All state mutations must go through `setState()` and `saveState()` in state.js. This ensures localStorage stays in sync.
@@ -79,8 +80,8 @@ The `applyTimeOffset()` function in settings.js allows simulating time changes f
 
 | Module | Purpose | Key Functions |
 |--------|---------|---|
-| state.js | State + localStorage | getState(), setState(), saveState(), pushHistory(), undoLastAction() |
-| ui.js | DOM updates | updateUI(), updateLoadingText() |
+| state.js | State + localStorage | getState(), setState(), saveState(), pushHistory(), undoLastAction(), getCap(), getDayStart() |
+| ui.js | DOM updates + appearance | updateUI(), applyAppearance(), fmtTime(), THEMES, BLOCKS |
 | actions.js | User actions | takePill(), snooze(), checkReset(), manualResetDay(), confirmResetDay(), resetDayFromButton() |
 | scheduler.js | Dose timing | calculateSchedule() |
 | audio.js | Beeping | playBeep(), handleBeeping() |
@@ -90,10 +91,14 @@ The `applyTimeOffset()` function in settings.js allows simulating time changes f
 
 ## Important Implementation Details
 
-- **No build system**: All JS is vanilla. Uses Tailwind CSS + FontAwesome from CDN (cached by the service worker).
+- **No build system**: All JS is vanilla. Own CSS in `public/styles.css`; FontAwesome (pinned 6.5.2) from CDN, cached by the service worker.
+- **Themes**: each theme is a `[data-theme]` block of CSS variables in styles.css, plus an entry in `THEMES` (ui.js). Text colors are ONLY `#fff` or `#000` (user requirement: no gray text). Status is shown by background color (`data-state` attributes), never by text color.
+- **Layout/customization**: `settings.ui` holds theme, fontScale, clock24, swapSides, keepAwake, block orders (`infoOrder`/`actionOrder`/`toolOrder`), `hidden` ids and `labels`. Blocks are `[data-block]`/`[data-tool]` elements ordered via CSS `order`. Add a new block to `BLOCKS` in ui.js; ids in `FIXED` can't be hidden. Portrait vs landscape is pure CSS (`@media (orientation: portrait)`).
+- **Dose cap**: always use `getCap()` (state.js); never recompute effective totals inline.
 - **HTML onclick handlers**: Functions must be on `window` object. See how actions are exposed in app.js. Exception: the main `#btn-take` button uses a click listener in initializeApp() and switches behavior via `data-action` attribute (`"pill"` vs `"reset"`).
 - **History/Undo**: pushHistory() saves state snapshots. undoLastAction() restores. Limited to 5 snapshots (older entries are dropped).
-- **Day reset logic**: checkReset() runs every 500ms and handles daily reset at midnight (respects time offset).
+- **Day reset logic**: `getDayStart()` defines the logical day (starts at the auto-reset time). checkReset() and the watchdog both use it. With auto-reset off the day only ends by manual reset.
+- **Snoozes**: tracked as `snoozeAddedMs` so calculateSchedule() keeps them on recalculation.
 - **Beeping**: Handled by handleBeeping() which runs every 500ms. Uses Web Audio API for sound.
 - **localStorage format**: Single JSON string stored at key 'pillTrackerState'. No backup—modifications are permanent.
 

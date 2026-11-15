@@ -3,169 +3,91 @@
  * Core user actions like taking pills, snoozing, and resetting
  */
 
-import { getState, getNow, saveState, pushHistory, DEFAULT_STATE } from './state.js';
+import { getState, getNow, saveState, pushHistory, getCap, getDayStart, clone, DEFAULT_STATE } from './state.js';
 import { calculateSchedule } from './scheduler.js';
 
-export function takePill() {
-    pushHistory();
-    const now = getNow();
-    const state = getState();
-    const d = state.data;
-
-    // 1. Record Time
-    d.lastDoseTime = now.getTime();
-    
-    // 2. If first dose, set start of day
-    if (d.dosesTaken === 0) {
-        d.firstDoseTime = now.getTime();
-    }
-
-    // 3. Increment Count
-    d.dosesTaken++;
-
-    // 4. Reset Snoozes for next round
-    d.snoozesUsedForCurrent = 0;
-
-    // 5. Calculate Schedule for remaining
-    calculateSchedule();
-
-    saveState();
-}
+// Blocks double-taps on the big button (e.g. last pill -> instant "Reset Day?")
+let lastActionAt = 0;
+export const recentlyActed = () => Date.now() - lastActionAt < 1500;
 
 /**
- * Record a dose that was actually taken at an earlier time.
- * Lets a caregiver log a forgotten pill so the schedule behaves as if
- * it had been taken then (e.g. woke at 9am, logs it at 11am -> counts as 9am).
- *
- * @param {number} timestamp - epoch ms the dose was really taken
+ * Record a dose. Defaults to now; pass an earlier timestamp to log a
+ * forgotten pill so the schedule behaves as if it was taken then.
  * @returns {boolean} true if a dose was recorded
  */
-export function takePillAt(timestamp) {
+export function takePillAt(timestamp = getNow().getTime()) {
     const now = getNow().getTime();
     const state = getState();
     const d = state.data;
 
-    // Don't exceed the day's dose limit
-    const cap = d.effectiveTotalDoses || state.settings.totalDoses;
-    if (d.dosesTaken >= cap) return false;
+    if (d.dosesTaken >= getCap()) return false;
 
-    let ts = timestamp;
-
-    // Never in the future
-    if (ts > now) ts = now;
-
+    let ts = Math.min(timestamp, now); // never in the future
     // Never before the previous dose (avoids a negative interval)
-    if (d.dosesTaken > 0 && d.lastDoseTime && ts < d.lastDoseTime) {
-        ts = d.lastDoseTime;
-    }
+    if (d.dosesTaken > 0 && d.lastDoseTime && ts < d.lastDoseTime) ts = d.lastDoseTime;
+    // Never before the current logical day, or checkReset would wipe it at once
+    const dayStart = getDayStart();
+    if (dayStart !== null && ts < dayStart) ts = dayStart;
 
     pushHistory();
-
     d.lastDoseTime = ts;
-    if (d.dosesTaken === 0) {
-        d.firstDoseTime = ts;
-    }
+    if (d.dosesTaken === 0) d.firstDoseTime = ts;
     d.dosesTaken++;
     d.snoozesUsedForCurrent = 0;
+    d.snoozeAddedMs = 0;
 
     calculateSchedule();
     saveState();
+    lastActionAt = Date.now();
     return true;
 }
 
-let snoozeDebounce = false;
-export function snooze() {
-    if (snoozeDebounce) return;
-    snoozeDebounce = true;
-    
-    // Disable button temporarily
-    const btnSnooze = document.getElementById('btn-snooze');
-    if (btnSnooze) {
-        btnSnooze.disabled = true;
-        btnSnooze.classList.add('opacity-50', 'cursor-not-allowed');
-    }
-    
-    pushHistory();
-    const state = getState();
-    const d = state.data;
-    if (d.snoozesUsedForCurrent >= 4) {
-        snoozeDebounce = false;
-        if (btnSnooze) {
-            btnSnooze.disabled = false;
-            btnSnooze.classList.remove('opacity-50', 'cursor-not-allowed');
-        }
-        return;
-    }
+export const takePill = () => takePillAt();
 
+let snoozeLock = false;
+export const isSnoozeLocked = () => snoozeLock;
+
+export function snooze() {
+    const state = getState();
+    const s = state.settings;
+    const d = state.data;
+    if (snoozeLock || d.dosesTaken === 0 || !d.nextDoseScheduled || d.dosesTaken >= getCap()) return;
+    if (d.snoozesUsedForCurrent >= s.snoozeCount) return;
+
+    snoozeLock = true;
+    pushHistory();
+    // Snooze from now if already overdue, otherwise from the due time
+    const next = Math.max(d.nextDoseScheduled, getNow().getTime()) + s.snoozeMinutes * 60000;
+    d.snoozeAddedMs = (d.snoozeAddedMs || 0) + (next - d.nextDoseScheduled);
+    d.nextDoseScheduled = next;
     d.snoozesUsedForCurrent++;
-    // Add 15 mins (15 * 60 * 1000)
-    d.nextDoseScheduled += (15 * 60 * 1000);
-    
     saveState();
-    
-    // Re-enable after 1.5 seconds
-    setTimeout(() => {
-        snoozeDebounce = false;
-        if (btnSnooze) {
-            btnSnooze.disabled = false;
-            btnSnooze.classList.remove('opacity-50', 'cursor-not-allowed');
-        }
-    }, 1500);
+    setTimeout(() => { snoozeLock = false; }, 1500);
 }
 
 export function checkReset() {
-    const now = getNow();
     const state = getState();
-    
-    // Only auto-reset if enabled
-    if (!state.settings.autoResetEnabled) return;
-    
-    const resetHour = state.settings.autoResetHour || 0;
-    
-    // Check if first dose time was before the reset hour today
-    if (state.data.firstDoseTime) {
-        const doseDate = new Date(state.data.firstDoseTime);
-        const resetTimeToday = new Date(now);
-        resetTimeToday.setHours(resetHour, 0, 0, 0);
-        
-        // If current time is past reset hour, and dose was taken before reset hour today,
-        // or dose was taken on a different day, reset
-        if (now >= resetTimeToday && doseDate < resetTimeToday) {
-            manualResetDay();
-        } else if (now.getFullYear() !== doseDate.getFullYear() ||
-                   now.getMonth() !== doseDate.getMonth() ||
-                   now.getDate() !== doseDate.getDate()) {
-            // Different day entirely
-            manualResetDay();
-        }
+    const dayStart = getDayStart();
+    if (dayStart !== null && state.data.firstDoseTime && state.data.firstDoseTime < dayStart) {
+        manualResetDay();
     }
 }
 
 export function manualResetDay() {
     const state = getState();
-    state.data = JSON.parse(JSON.stringify(DEFAULT_STATE.data));
-    // Keep time offset though
-    const oldOffset = JSON.parse(localStorage.getItem('pillTrackerState'))?.data?.timeOffset || 0;
-    state.data.timeOffset = oldOffset;
+    const offset = state.data.timeOffset || 0;
+    state.data = clone(DEFAULT_STATE.data);
+    state.data.timeOffset = offset;
+    state.data.currentInterval = state.settings.standardInterval;
+    state.data.effectiveTotalDoses = state.settings.totalDoses;
+    state.history = []; // undo must not resurrect the previous day
     saveState();
 }
 
 export function confirmResetDay() {
-    // Confirm with the user before resetting; push history for undo
-    if (typeof window !== 'undefined' && window.confirm) {
-        const ok = window.confirm('Reset day? This will clear doses taken for today. Proceed?');
-        if (!ok) return;
-    }
-    manualResetDay();
+    if (window.confirm('Reset day? This will clear doses taken for today. Proceed?')) manualResetDay();
 }
 
 export function resetDayFromButton() {
-    
-    // Confirm with the user before resetting
-    if (typeof window !== 'undefined' && window.confirm) {
-        const ok = window.confirm('Start a new day? This will reset all doses. Proceed?');
-        if (!ok) return;
-    }
-    
-    manualResetDay();
+    if (window.confirm('Start a new day? This will reset all doses. Proceed?')) manualResetDay();
 }

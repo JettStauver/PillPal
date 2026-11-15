@@ -3,155 +3,75 @@
  * Verifies state integrity and corrects issues on page load
  */
 
-import { getState, getNow, saveState, DEFAULT_STATE } from './state.js';
+import { getState, getNow, saveState, getCap, getDayStart } from './state.js';
 import { calculateSchedule } from './scheduler.js';
 import { manualResetDay } from './actions.js';
 
 export function runWatchdog() {
-    const now = getNow();
+    const now = getNow().getTime();
     const state = getState();
     const d = state.data;
     const s = state.settings;
-    let watchdogIssuesFound = [];
+    const issues = [];
+    const fix = (msg, fn) => { issues.push(msg); fn(); };
+    const isTs = v => v === null || (typeof v === 'number' && Number.isFinite(v));
 
-    // 1. Verify day hasn't changed - if so, reset
-    if (d.firstDoseTime) {
-        const doseDate = new Date(d.firstDoseTime);
-        const dayChanged = now.getFullYear() !== doseDate.getFullYear() ||
-                           now.getMonth() !== doseDate.getMonth() ||
-                           now.getDate() !== doseDate.getDate();
-        if (dayChanged) {
-            watchdogIssuesFound.push("Day changed - resetting state");
-            manualResetDay();
-            return; // Exit after reset
-        }
-    }
-
-    // 2. Verify dosesTaken is valid
-    if (d.dosesTaken < 0) {
-        watchdogIssuesFound.push("Invalid dosesTaken (negative) - resetting to 0");
-        d.dosesTaken = 0;
-    }
-    if (d.dosesTaken > s.totalDoses) {
-        watchdogIssuesFound.push("dosesTaken exceeds totalDoses - capping at totalDoses");
-        d.dosesTaken = s.totalDoses;
-    }
-
-    // 3. Verify timestamps are valid
-    if (d.lastDoseTime && typeof d.lastDoseTime !== 'number') {
-        watchdogIssuesFound.push("Invalid lastDoseTime format - clearing");
-        d.lastDoseTime = null;
-    }
-    if (d.firstDoseTime && typeof d.firstDoseTime !== 'number') {
-        watchdogIssuesFound.push("Invalid firstDoseTime format - clearing");
-        d.firstDoseTime = null;
-    }
-
-    // 4. Verify timestamps are not in the future (more than 1 hour ahead)
-    const oneHour = 60 * 60 * 1000;
-    if (d.lastDoseTime && d.lastDoseTime > now.getTime() + oneHour) {
-        watchdogIssuesFound.push("lastDoseTime is far in the future - resetting");
-        d.lastDoseTime = null;
-    }
-    if (d.firstDoseTime && d.firstDoseTime > now.getTime() + oneHour) {
-        watchdogIssuesFound.push("firstDoseTime is far in the future - resetting");
-        d.firstDoseTime = null;
-    }
-
-    // 5. Verify nextDoseScheduled is valid
-    if (d.nextDoseScheduled && typeof d.nextDoseScheduled !== 'number') {
-        watchdogIssuesFound.push("Invalid nextDoseScheduled format - will recalculate");
-        d.nextDoseScheduled = null;
-    }
-
-    // 6. Verify snoozesUsedForCurrent doesn't exceed maximum
-    if (d.snoozesUsedForCurrent > 4) {
-        watchdogIssuesFound.push("snoozesUsedForCurrent exceeds 4 - capping at 4");
-        d.snoozesUsedForCurrent = 4;
-    }
-    if (d.snoozesUsedForCurrent < 0) {
-        watchdogIssuesFound.push("snoozesUsedForCurrent is negative - resetting to 0");
-        d.snoozesUsedForCurrent = 0;
-    }
-
-    // 7. Verify effectiveTotalDoses exists and is reasonable
-    if (d.effectiveTotalDoses === undefined || d.effectiveTotalDoses === null) {
-        watchdogIssuesFound.push("effectiveTotalDoses not set - using totalDoses");
-        d.effectiveTotalDoses = s.totalDoses;
-    }
-    if (d.effectiveTotalDoses < d.dosesTaken) {
-        watchdogIssuesFound.push("effectiveTotalDoses < dosesTaken - adjusting");
-        d.effectiveTotalDoses = d.dosesTaken;
-    }
-
-    // 8. Verify currentInterval is reasonable
-    if (d.currentInterval < s.minInterval || d.currentInterval > s.standardInterval) {
-        if (d.dosesTaken === 0) {
-            // Not started, use standard
-            d.currentInterval = s.standardInterval;
-            watchdogIssuesFound.push("currentInterval invalid (not started) - reset to standardInterval");
-        } else {
-            // In progress, recalculate
-            watchdogIssuesFound.push("currentInterval invalid (in progress) - will recalculate");
-            d.currentInterval = s.standardInterval; // Will be overwritten by calculateSchedule
-        }
-    }
-
-    // 9. Verify dayCompleted flag matches reality
-    const effectiveTotal = d.effectiveTotalDoses || s.totalDoses;
-    if (d.dayCompleted && d.dosesTaken < effectiveTotal) {
-        watchdogIssuesFound.push("dayCompleted is true but doses incomplete - fixing flag");
-        d.dayCompleted = false;
-    }
-    if (!d.dayCompleted && d.dosesTaken >= effectiveTotal && d.dosesTaken > 0) {
-        watchdogIssuesFound.push("Day is complete but flag not set - setting flag");
-        d.dayCompleted = true;
-    }
-
-    // 10. Verify timeOffset is reasonable (not more than 24 hours)
-    const maxOffsetMs = 24 * 60 * 60 * 1000;
-    if (Math.abs(d.timeOffset) > maxOffsetMs) {
-        watchdogIssuesFound.push("timeOffset exceeds 24 hours - clearing");
-        d.timeOffset = 0;
-    }
-
-    // 11. Verify consistency: if dosesTaken > 0, should have lastDoseTime and firstDoseTime
-    if (d.dosesTaken > 0 && !d.firstDoseTime) {
-        watchdogIssuesFound.push("dosesTaken > 0 but no firstDoseTime - resetting day");
+    // 1. Day rolled over (same rule as checkReset, so they never disagree)
+    const dayStart = getDayStart();
+    if (dayStart !== null && d.firstDoseTime && d.firstDoseTime < dayStart) {
+        console.warn('🐕 WATCHDOG: day rolled over - resetting');
         manualResetDay();
-        return;
+        return ['Day changed - resetting state'];
     }
-    if (d.dosesTaken > 0 && !d.lastDoseTime) {
-        watchdogIssuesFound.push("dosesTaken > 0 but no lastDoseTime - resetting day");
+
+    // 2. Counters
+    if (!Number.isInteger(d.dosesTaken) || d.dosesTaken < 0) fix('Invalid dosesTaken - 0', () => { d.dosesTaken = 0; });
+    if (d.dosesTaken > s.totalDoses) fix('dosesTaken > totalDoses - capping', () => { d.dosesTaken = s.totalDoses; });
+    if (!(d.snoozesUsedForCurrent >= 0)) fix('Invalid snooze count - 0', () => { d.snoozesUsedForCurrent = 0; });
+    if (d.snoozesUsedForCurrent > s.snoozeCount) fix('Snooze count over limit - capping', () => { d.snoozesUsedForCurrent = s.snoozeCount; });
+    if (!(d.snoozeAddedMs >= 0)) fix('Invalid snoozeAddedMs - 0', () => { d.snoozeAddedMs = 0; });
+
+    // 3. Timestamps
+    for (const k of ['lastDoseTime', 'firstDoseTime', 'nextDoseScheduled']) {
+        if (!isTs(d[k])) fix(`Invalid ${k} - clearing`, () => { d[k] = null; });
+    }
+    // Future dose times (e.g. after clearing a clock override): clamp, don't wipe the day
+    for (const k of ['lastDoseTime', 'firstDoseTime']) {
+        if (d[k] && d[k] > now) fix(`${k} in the future - clamping to now`, () => { d[k] = now; });
+    }
+    if (d.firstDoseTime && d.lastDoseTime && d.firstDoseTime > d.lastDoseTime) {
+        fix('firstDoseTime after lastDoseTime - fixing', () => { d.firstDoseTime = d.lastDoseTime; });
+    }
+
+    // 4. Time offset (more than 24h is surely a mistake)
+    if (!Number.isFinite(d.timeOffset) || Math.abs(d.timeOffset) > 24 * 60 * 60 * 1000) {
+        fix('timeOffset invalid - clearing', () => { d.timeOffset = 0; });
+    }
+
+    // 5. Doses taken but no dose times: unrecoverable
+    if (d.dosesTaken > 0 && (!d.firstDoseTime || !d.lastDoseTime)) {
+        console.warn('🐕 WATCHDOG: doses without timestamps - resetting day');
         manualResetDay();
-        return;
+        return ['dosesTaken > 0 but missing dose times - reset'];
     }
 
-    // 12. Recalculate schedule if in active dosing period
-    if (d.dosesTaken > 0 && d.dosesTaken < effectiveTotal) {
-        const prevInterval = d.currentInterval;
-        const prevNextDose = d.nextDoseScheduled;
-        
-        calculateSchedule();
+    // 6. History
+    if (!Array.isArray(state.history)) fix('history not an array - resetting', () => { state.history = []; });
 
-        if (prevInterval !== d.currentInterval || prevNextDose !== d.nextDoseScheduled) {
-            watchdogIssuesFound.push("Schedule recalculated after watchdog check");
-        }
+    // 7. Recompute derived fields (interval, cap, next dose, dayCompleted)
+    const before = JSON.stringify([d.currentInterval, d.nextDoseScheduled, d.effectiveTotalDoses, d.dayCompleted]);
+    if (d.dosesTaken > 0 && d.effectiveTotalDoses < d.dosesTaken) d.effectiveTotalDoses = d.dosesTaken;
+    calculateSchedule();
+    if (d.dosesTaken > getCap()) fix('dosesTaken > cap', () => { d.effectiveTotalDoses = d.dosesTaken; });
+    if (before !== JSON.stringify([d.currentInterval, d.nextDoseScheduled, d.effectiveTotalDoses, d.dayCompleted])) {
+        issues.push('Schedule recalculated');
     }
 
-    // 13. Verify history array integrity
-    if (!Array.isArray(state.history)) {
-        watchdogIssuesFound.push("history is not an array - resetting");
-        state.history = [];
-    }
-
-    // Log watchdog results
-    if (watchdogIssuesFound.length > 0) {
-        console.warn("🐕 WATCHDOG: Issues found and corrected:", watchdogIssuesFound);
-        saveState(); // Save corrected state
+    if (issues.length) {
+        console.warn('🐕 WATCHDOG: Issues found and corrected:', issues);
+        saveState();
     } else {
-        console.log("✅ WATCHDOG: All states verified and correct");
+        console.log('✅ WATCHDOG: All states verified and correct');
     }
-
-    return watchdogIssuesFound;
+    return issues;
 }

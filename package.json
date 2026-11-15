@@ -1,11 +1,12 @@
 {
   "name": "pillpal",
-  "version": "26.0.1",
+  "version": "26.1.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "cf dev",
-    "deploy": "cf deploy"
+    "deploy": "cf deploy",
+    "test": "node test/logic.test.mjs"
   },
   "devDependencies": {
     "cf": "^1.0.0-beta.28",
