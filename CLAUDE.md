@@ -66,7 +66,7 @@ The watchdog (watchdog.js:runWatchdog) runs on startup to validate state integri
 
 ### Testing Time-Dependent Logic
 
-The `applyTimeOffset()` function in settings.js allows simulating time changes for testing. `getNow()` in state.js always uses this offset when calculating current time.
+`getNow()` in state.js always applies `data.timeOffset`. The Settings clock override (`applyTimeOffset()`) is for fixing a wrong tablet clock: it shifts logged dose times along with the offset, so it does NOT simulate time passing. To simulate time, set `data.timeOffset` directly in localStorage and reload, or stub `Date.now` (see test/logic.test.mjs).
 
 ### Key Files to Understand Before Making Changes
 

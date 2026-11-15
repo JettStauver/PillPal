@@ -80,4 +80,12 @@ store.pillTrackerState = '{';
 const fresh3 = await import('../public/js_modules/state.js?corrupt');
 assert.equal(fresh3.getState().data.dosesTaken, 0, 'corrupt storage -> defaults');
 
+// 10. Idle reset: skipped last dose doesn't carry into next morning
+s = fresh({ idleResetHours: 16 });
+NOW = at(8); A.takePill();             // next due 12:00
+NOW = at(12) + 15.9 * 3600e3; A.checkReset(); assert.equal(s.data.dosesTaken, 1);
+NOW = at(12) + 16.1 * 3600e3; A.checkReset(); assert.equal(s.data.dosesTaken, 0, 'idle reset');
+s = fresh({ idleResetHours: 0 }); NOW = at(8); A.takePill(); NOW = at(8, 0, 3); A.checkReset();
+assert.equal(s.data.dosesTaken, 1, 'idle reset off');
+
 console.log('logic ok');

@@ -40,6 +40,7 @@ export const DEFAULT_STATE = {
         autoResetEnabled: false, // Whether to automatically reset the day
         autoResetHour: 0,
         autoResetMinute: 0,
+        idleResetHours: 16, // also reset if no dose taken/due for this long (0 = off)
 
         // Snooze / eating window
         snoozeCount: 4,

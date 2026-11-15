@@ -23,6 +23,9 @@
         <div class="loading-subtext">Please wait democratically...</div>
     </div>
 
+    <!-- Shown while the browser is blocking alarm sound (needs one tap) -->
+    <button id="audio-warn" hidden><i class="fa-solid fa-volume-xmark"></i> Alarm sound is off &mdash; tap here to turn it on</button>
+
     <div id="app-view">
         <!-- INFO COLUMN (blocks reorderable via settings) -->
         <main id="info-col" class="col">
@@ -172,6 +175,10 @@
                 <label class="check"><input type="checkbox" id="set-auto-reset-enabled" onchange="updateSettingsVisibility()"> Automatically reset day at a set time</label>
                 <input type="time" id="set-reset-hour" aria-label="Reset time">
                 <p class="hint">If off, the big button turns into "Reset Day?" when all pills are done.</p>
+                <label class="stack">Also reset after this many hours with no dose taken or due (0 = never)
+                    <input type="number" id="set-idle-reset" min="0" max="48">
+                </label>
+                <p class="hint">Stops a skipped dose from carrying into the next morning.</p>
             </fieldset>
 
             <fieldset>
@@ -181,13 +188,13 @@
                     <button type="button" onclick="applyTimeOffset()" class="btn info">Set</button>
                     <button type="button" onclick="clearTimeOffset()" class="btn">Reset</button>
                 </div>
-                <p class="hint">Use this if the tablet time is wrong.</p>
+                <p class="hint">Use this if the tablet time is wrong. Doses already logged move with the clock, so timing stays correct.</p>
             </fieldset>
 
             <button onclick="saveSettings()" class="btn ok wide">Save &amp; Apply Changes</button>
             <div class="center foot">
                 <button onclick="hardReset()" class="link danger-text">Hard Reset (Wipe All Data)</button>
-                <p>v26.1</p>
+                <p>v26.1.1</p>
             </div>
         </div>
     </div>

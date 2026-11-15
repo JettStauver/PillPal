@@ -18,6 +18,7 @@ function getAudioContext() {
     return _audioCtx;
 }
 export const unlockAudio = () => { getAudioContext(); };
+export const isAudioBlocked = () => !_audioCtx || _audioCtx.state !== 'running';
 
 export function playBeep(durationMs = 220) {
     const audioContext = getAudioContext();

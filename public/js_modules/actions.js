@@ -67,10 +67,14 @@ export function snooze() {
 
 export function checkReset() {
     const state = getState();
+    const d = state.data;
+    if (!d.firstDoseTime) return;
     const dayStart = getDayStart();
-    if (dayStart !== null && state.data.firstDoseTime && state.data.firstDoseTime < dayStart) {
-        manualResetDay();
-    }
+    if (dayStart !== null && d.firstDoseTime < dayStart) return manualResetDay();
+    // Idle reset: nothing taken or due for N hours (e.g. a skipped last dose overnight)
+    const idleMs = (state.settings.idleResetHours || 0) * 3600e3;
+    const lastActivity = Math.max(d.lastDoseTime || 0, d.nextDoseScheduled || 0);
+    if (idleMs > 0 && getNow().getTime() - lastActivity > idleMs) manualResetDay();
 }
 
 export function manualResetDay() {

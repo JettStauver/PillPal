@@ -3,7 +3,7 @@
  * Handles settings UI and configuration
  */
 
-import { getState, saveState, clone, DEFAULT_STATE, DEFAULT_LABELS } from './state.js';
+import { getState, getNow, saveState, clone, DEFAULT_STATE, DEFAULT_LABELS } from './state.js';
 import { calculateSchedule } from './scheduler.js';
 import { applyAppearance, normOrder, BLOCKS, FIXED, THEMES } from './ui.js';
 import { playBeep, unlockAudio } from './audio.js';
@@ -24,6 +24,7 @@ const NUMBERS = [
     ['set-eat-after', 'eatAfterMin', 0, 600, true],
     ['set-beep-interval-1', 'beepInterval1', 1, 60, true],
     ['set-beep-interval-2', 'beepInterval2', 1, 600, true],
+    ['set-idle-reset', 'idleResetHours', 0, 48, true],
 ];
 const CHECKS = [
     ['set-use-endtime', 'useEndTime'],
@@ -167,6 +168,22 @@ export function saveSettings() {
     if ($('set-use-endtime').checked && !end) return alertBad('Enter a target end time.');
     if ($('set-auto-reset-enabled').checked && !reset) return alertBad('Enter a reset time.');
 
+    // A new reset time (or idle limit) can put today's doses in "yesterday": warn first
+    const d0 = state.data;
+    if (d0.firstDoseTime) {
+        const now = getNow();
+        let wipes = false;
+        if ($('set-auto-reset-enabled').checked) {
+            const start = new Date(now);
+            start.setHours(reset[0], reset[1], 0, 0);
+            if (start > now) start.setDate(start.getDate() - 1);
+            wipes = d0.firstDoseTime < start.getTime();
+        }
+        const idleMs = vals.idleResetHours * 3600e3;
+        if (idleMs > 0 && now - Math.max(d0.lastDoseTime || 0, d0.nextDoseScheduled || 0) > idleMs) wipes = true;
+        if (wipes && !window.confirm("With these reset settings, today's doses will be cleared right away. Continue?")) return false;
+    }
+
     Object.assign(s, vals);
     s.intervalMode = $('set-interval-mode').value;
     for (const [id, key] of CHECKS) s[key] = $(id).checked;
@@ -210,20 +227,37 @@ export function testBeep() {
     setTimeout(() => { playBeep(600); getState().settings.beepVolume = prev; }, 50);
 }
 
-export function applyTimeOffset() {
-    const state = getState();
-    const t = parseTime('set-time-input');
-    if (!t) return;
-    const nowReal = new Date();
-    const desired = new Date();
-    desired.setHours(t[0], t[1], 0, 0);
-    state.data.timeOffset = desired.getTime() - nowReal.getTime();
+/**
+ * Change the clock correction. Logged dose times shift with it, so fixing a
+ * wrong tablet clock never makes a pill due early or late.
+ */
+function setOffset(offset) {
+    const d = getState().data;
+    const delta = offset - (d.timeOffset || 0);
+    for (const k of ['lastDoseTime', 'firstDoseTime', 'nextDoseScheduled']) if (d[k]) d[k] += delta;
+    for (const h of getState().history) {
+        for (const k of ['lastDoseTime', 'firstDoseTime', 'nextDoseScheduled']) if (h[k]) h[k] += delta;
+    }
+    d.timeOffset = offset;
     saveState();
 }
 
+export function applyTimeOffset() {
+    const t = parseTime('set-time-input');
+    if (!t) return;
+    const nowReal = Date.now();
+    const desired = new Date(nowReal);
+    desired.setHours(t[0], t[1], 0, 0);
+    // Pick the nearest day: 23:50 -> 00:10 is +20 min, not -23h40m
+    const DAY = 24 * 3600e3;
+    let off = desired.getTime() - nowReal;
+    if (off > DAY / 2) off -= DAY;
+    else if (off < -DAY / 2) off += DAY;
+    setOffset(off);
+}
+
 export function clearTimeOffset() {
-    getState().data.timeOffset = 0;
-    saveState();
+    setOffset(0);
 }
 
 export function hardReset() {

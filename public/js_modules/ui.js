@@ -5,6 +5,7 @@
 
 import { getState, getNow, getCap, isUndoLocked, DEFAULT_LABELS } from './state.js';
 import { isSnoozeLocked } from './actions.js';
+import { isAudioBlocked } from './audio.js';
 
 const MIN = 60 * 1000;
 const $ = id => document.getElementById(id);
@@ -137,7 +138,7 @@ export function updateUI() {
             eatAt = d.lastDoseTime + eatAfter;
             eatTimer = `Wait ${fmtDur(eatAt - nowMs)} (post-pill)`;
         } else if (nowMs >= preStart) {
-            eatAt = next + eatAfter;
+            eatAt = Math.max(next, nowMs) + eatAfter; // overdue: earliest is after taking it now
             eatTimer = due ? 'Take pill first' : `Pill in ${fmtDur(next - nowMs)} (pre-pill)`;
         }
         // Post-pill window ending inside the pre-pill window: no gap to eat in
@@ -171,6 +172,9 @@ export function updateUI() {
 
     // Undo button
     $('btn-undo').disabled = state.history.length === 0 || isUndoLocked();
+
+    // Browsers block sound until a tap (e.g. after a reload): say so while doses are pending
+    $('audio-warn').hidden = !(snoozeOk && isAudioBlocked());
 }
 
 export function updateLoadingText(newText) {

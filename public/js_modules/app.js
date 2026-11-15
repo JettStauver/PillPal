@@ -3,7 +3,8 @@
  * Initializes and coordinates all modules
  */
 
-import { getState, getNow, undoLastAction, getCap, getDayStart } from './state.js';
+import { getState, getNow, saveState, undoLastAction, getCap, getDayStart } from './state.js';
+import { calculateSchedule } from './scheduler.js';
 import { handleBeeping, unlockAudio } from './audio.js';
 import { runWatchdog } from './watchdog.js';
 import { takePill, takePillAt, snooze, checkReset, manualResetDay, confirmResetDay, resetDayFromButton, recentlyActed } from './actions.js';
@@ -17,7 +18,8 @@ const withUI = fn => (...a) => { const r = fn(...a); updateUI(); syncWakeLock();
 // Export functions to global scope for HTML onclick handlers
 window.takePill = withUI(takePill);
 window.snooze = withUI(snooze);
-window.undoLastAction = withUI(undoLastAction);
+// Recalculate after undo: the snapshot may predate a settings change
+window.undoLastAction = withUI(() => { undoLastAction(); calculateSchedule(); saveState(); });
 window.manualResetDay = withUI(manualResetDay);
 window.confirmResetDay = withUI(confirmResetDay);
 window.resetDayFromButton = withUI(resetDayFromButton);
@@ -49,7 +51,10 @@ window.logPillEarlier = () => {
     const doseTime = new Date(now);
     doseTime.setHours(h, m, 0, 0);
     // A time later than now means last night (e.g. 23:30 entered at 00:15)
-    if (doseTime > now) doseTime.setDate(doseTime.getDate() - 1);
+    if (doseTime > now) {
+        doseTime.setDate(doseTime.getDate() - 1);
+        if (!window.confirm(`${input.value} is later than now. Log this dose for YESTERDAY at ${fmtTime(doseTime)}?`)) return;
+    }
     const d = getState().data;
     const dayStart = getDayStart();
     let note = '';
@@ -77,8 +82,14 @@ async function syncWakeLock() {
     } catch { /* needs a gesture or not allowed; retried on next tap */ }
 }
 
+// New version waiting: reload only when no dose is pending, since a reload
+// blocks alarm sound until someone taps the screen
+let updateReady = false;
 function tick() {
     checkReset();
+    const d = getState().data;
+    const editing = !$('settings-overlay').hidden || !$('backdate-overlay').hidden;
+    if (updateReady && !editing && (d.dosesTaken === 0 || d.dosesTaken >= getCap())) { updateReady = false; location.reload(); return; }
     updateUI();
     handleBeeping();
 }
@@ -100,6 +111,12 @@ export function initializeApp() {
     // Any tap unlocks audio + wake lock (browsers require a gesture)
     document.addEventListener('pointerdown', () => { unlockAudio(); syncWakeLock(); }, { passive: true });
     document.addEventListener('visibilitychange', () => { syncWakeLock(); if (!document.hidden) tick(); });
+    // Escape closes whichever overlay is open
+    document.addEventListener('keydown', e => {
+        if (e.key !== 'Escape') return;
+        if (!$('settings-overlay').hidden) toggleSettings();
+        else if (!$('backdate-overlay').hidden) window.toggleBackdate();
+    });
 
     runWatchdog();
     tick();
@@ -124,10 +141,7 @@ if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js')
         .then(reg => setInterval(() => reg.update().catch(() => {}), 60 * 60 * 1000))
         .catch(err => console.warn('SW registration failed', err));
-    let reloaded = false;
     navigator.serviceWorker.addEventListener('controllerchange', () => {
-        if (!hadController || reloaded) return;
-        reloaded = true;
-        location.reload();
+        if (hadController) updateReady = true; // tick() reloads at a safe moment
     });
 }
